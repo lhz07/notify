@@ -1,0 +1,8 @@
+NOTIFY/1
+Title: new friend request from master
+Program: my_blog
+Level: Notice
+Body-Length: 43
+
+You have a new friend request:
+name: master
