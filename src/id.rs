@@ -1,5 +1,7 @@
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct Id(u64);
+
+#[derive(Default)]
 pub struct IdGenerator(u64);
 
 impl IdGenerator {

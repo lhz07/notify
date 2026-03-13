@@ -1,5 +1,6 @@
 pub mod app;
 pub mod confirm_widget;
+pub mod flags;
 pub mod func;
 pub mod id;
 pub mod notification_widget;

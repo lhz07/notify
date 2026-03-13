@@ -49,10 +49,11 @@ fn correct() {
 fn write() {
     use crate::proto::Level;
     let notify = NotifyV1 {
-        level: Level::Info,
-        title: "This is just info".to_string(),
+        level: Level::Critical,
+        title: "This is a CRITICAL message!".to_string(),
         program: "test-test".to_string(),
         body: "something very very long...".to_string(),
     };
-    notify.write_to_dir(".").unwrap();
+    let dir = dirs::data_local_dir().unwrap();
+    notify.write_to_dir(dir.join("notify")).unwrap();
 }

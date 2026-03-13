@@ -37,6 +37,25 @@ impl Level {
             Level::Critical => level_str.red().bold(),
         }
     }
+    fn to_short_str(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Level::Info => ("¹", "I", "nfo"),
+            Level::Notice => ("²", "N", "oti"),
+            Level::Warning => ("³", "W", "arn"),
+            Level::Critical => ("⁴", "C", "rit"),
+        }
+    }
+    pub fn as_tui_color_short(&self) -> ratatui::text::Line<'_> {
+        use ratatui::style::Stylize;
+        let (num, underline, str) = self.to_short_str();
+        let num = num.dark_gray();
+        match self {
+            Level::Info => vec![num, underline.underlined().blue(), str.blue()].into(),
+            Level::Notice => vec![num, underline.underlined().cyan(), str.cyan()].into(),
+            Level::Warning => vec![num, underline.underlined().yellow(), str.yellow()].into(),
+            Level::Critical => vec![num, underline.underlined().red(), str.red()].into(),
+        }
+    }
 }
 
 impl fmt::Display for Level {
@@ -110,7 +129,7 @@ impl StrSplit for str {
                 return self.split_at(i + str.len()).0;
             }
         }
-        self.as_ref()
+        self
     }
 }
 

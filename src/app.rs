@@ -1,14 +1,15 @@
 use crate::{
     confirm_widget::{ActionConfirm, ConfirmWidget},
+    flags::LevelFlag,
     id::{Id, IdGenerator},
     notification_widget::{Noti, NotificationWidget},
-    proto::{self, Notification, StrSplit},
+    proto::{self, Level, Notification, StrSplit},
 };
 use indexmap::IndexMap;
 use ratatui::{
     DefaultTerminal,
     crossterm::event::{self, Event, KeyCode},
-    layout::{Constraint, Layout},
+    layout::{Constraint, Flex, Layout},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
@@ -31,7 +32,9 @@ pub struct App {
     // id_generator: IdGenerator,
     notifications: IndexMap<Id, Notification>,
     current_popup: Option<Popup>,
+    current_selected: Option<Id>,
     list_state: ListState,
+    level_flag: LevelFlag,
 }
 
 impl App {
@@ -50,6 +53,8 @@ impl App {
             current_popup: None,
             notification_queue: VecDeque::new(),
             list_state: ListState::default(),
+            level_flag: LevelFlag::default(),
+            current_selected: None,
         })
     }
     pub fn run(&mut self) -> io::Result<()> {
@@ -68,6 +73,9 @@ impl App {
             Event::Key(key) => key,
             _ => return false,
         };
+        if !key.modifiers.is_empty() {
+            return false;
+        }
 
         if let KeyCode::Esc = key.code
             && let Some(noti) = self.notification_queue.front()
@@ -89,7 +97,7 @@ impl App {
                         self.current_popup = None;
                         self.list_state.select_previous();
                     }
-                    KeyCode::Char('d') => {
+                    KeyCode::Char('d') | KeyCode::Enter => {
                         let id = *id;
                         self.current_popup = None;
                         if let Some(noti) = self.notifications.get(&id) {
@@ -156,12 +164,8 @@ impl App {
                     KeyCode::Char('q') => return true,
                     KeyCode::Char('d') => {
                         // delete current notification
-                        if let Some(index) = self.list_state.selected() {
-                            let (id, _) = self
-                                .notifications
-                                .get_index(index)
-                                .expect("index is always valid");
-                            self.current_popup = Some(Popup::DeleteSingle(*id));
+                        if let Some(id) = self.current_selected {
+                            self.current_popup = Some(Popup::DeleteSingle(id));
                         }
                     }
                     KeyCode::Char('C') => {
@@ -170,6 +174,18 @@ impl App {
                             "All notifications will be permanently deleted!",
                         );
                         self.current_popup = Some(Popup::DeleteAll(confirm))
+                    }
+                    KeyCode::Char('i') | KeyCode::Char('1') => {
+                        self.level_flag ^= LevelFlag::Info;
+                    }
+                    KeyCode::Char('n') | KeyCode::Char('2') => {
+                        self.level_flag ^= LevelFlag::Notice;
+                    }
+                    KeyCode::Char('w') | KeyCode::Char('3') => {
+                        self.level_flag ^= LevelFlag::Warning;
+                    }
+                    KeyCode::Char('c') | KeyCode::Char('4') => {
+                        self.level_flag ^= LevelFlag::Critical;
                     }
                     _ => (),
                 }
@@ -199,91 +215,167 @@ impl App {
             lines
         }
 
+        let notifications = self
+            .notifications
+            .iter()
+            .filter(|(_, noti)| self.level_flag.contains(noti.notify.level.into()));
+
         self.terminal.draw(|f| {
-            let main_layout =
-                Layout::vertical([Constraint::Min(2), Constraint::Percentage(100)]).split(f.area());
+            let main_layout = Layout::vertical([
+                Constraint::Min(1),
+                Constraint::Min(3),
+                Constraint::Percentage(100),
+            ])
+            .split(f.area());
+            let level_area = main_layout[1];
+            let tab_layout =
+                Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+                    .split(level_area);
+            let level_area = tab_layout[0];
+            let hint_area = tab_layout[1];
+            let content_area = main_layout[2];
             let title = "Notification Center".bold().into_centered_line();
             f.render_widget(title, main_layout[0]);
-            let horizontal_layuout =
+            let horizontal_layout =
                 Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
-                    .split(main_layout[1]);
-            let list_area = horizontal_layuout[0];
-            let detail_area = horizontal_layuout[1];
+                    .split(content_area);
+            let list_area = horizontal_layout[0];
+            let detail_area = horizontal_layout[1];
             let item_width = list_area.width.saturating_sub(5);
-            let list_items = if let Some(Popup::DeleteSingle(selected)) = &self.current_popup {
-                self.notifications
-                    .iter()
-                    .map(|(id, noti)| {
-                        if id == selected {
-                            #[rustfmt::skip]
-                            const SPACE: &str  = "        │ ";
-                            const DELETE: &str = "Delete? │ ";
-                            let mut lines = Vec::with_capacity(4);
-                            lines.push(Line::from(vec![
-                                DELETE.into(),
-                                noti.notify.program.as_str().bold(),
-                            ]));
-                            lines.push(Line::from(vec![
-                                SPACE.into(),
-                                noti.notify.title.as_str().into(),
-                            ]));
-                            lines.push(Line::from(vec![
-                                SPACE.into(),
-                                noti.notify.level.as_tui_color(),
-                                Span::from("  "),
-                                Span::from(noti.time_str()),
-                            ]));
-                            lines.push(Line::from(SPACE));
-                            lines
-                        } else {
-                            render_noti_lines(noti, item_width as usize)
-                        }
-                    })
-                    .collect()
-            } else {
-                self.notifications
-                    .iter()
-                    .map(|(_, noti)| render_noti_lines(noti, item_width as usize))
-                    .collect::<Vec<_>>()
+            let list_items = {
+                let notifications = notifications.clone();
+
+                if let Some(Popup::DeleteSingle(selected)) = &self.current_popup {
+                    notifications
+                        .map(|(id, noti)| {
+                            if id == selected {
+                                const SPACE: &str = "        │ ";
+                                vec![
+                                    Line::from(vec![
+                                        "D".underlined(),
+                                        "elete? │ ".into(),
+                                        noti.notify.program.as_str().bold(),
+                                    ]),
+                                    Line::from(vec![
+                                        SPACE.into(),
+                                        noti.notify.title.as_str().into(),
+                                    ]),
+                                    Line::from(vec![
+                                        SPACE.into(),
+                                        noti.notify.level.as_tui_color(),
+                                        Span::from("  "),
+                                        Span::from(noti.time_str()),
+                                    ]),
+                                    Line::from(SPACE),
+                                ]
+                            } else {
+                                render_noti_lines(noti, item_width as usize)
+                            }
+                        })
+                        .collect()
+                } else {
+                    notifications
+                        .map(|(_, noti)| render_noti_lines(noti, item_width as usize))
+                        .collect::<Vec<_>>()
+                }
             };
-            let list = List::new(list_items)
-                .block(
-                    Block::default()
-                        .title("Notifications")
-                        .borders(Borders::ALL),
-                )
-                .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
-                .highlight_style(
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::REVERSED),
-                )
-                .highlight_symbol("› ");
-            f.render_stateful_widget(list, list_area, &mut self.list_state);
-            // list state will always be corrected after rendering
-            if let Some(index) = self.list_state.selected() {
-                let detail_block = Block::default()
-                    .title("Detail")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::LightBlue));
-                let mut lines = Vec::with_capacity(2);
-                let noti = &self.notifications[index];
-                lines.push(Line::from(Span::from(noti.notify.title.as_str()).bold()));
-                lines.push(Line::default());
-                let body = Text::from(noti.notify.body.as_str());
-                lines.extend_from_slice(&body.lines);
-                let detail_paragraph = Paragraph::new(lines)
-                    .block(detail_block)
-                    .wrap(Wrap { trim: false });
-                f.render_widget(detail_paragraph, detail_area);
+
+            let level_block = Block::default().borders(Borders::ALL);
+            let inner = level_block.inner(level_area);
+            f.render_widget(level_block, level_area);
+            const LEVEL_LEN: u16 = 5;
+            let chunks = Layout::horizontal([
+                Constraint::Length(LEVEL_LEN),
+                Constraint::Length(LEVEL_LEN),
+                Constraint::Length(LEVEL_LEN),
+                Constraint::Length(LEVEL_LEN),
+            ])
+            .flex(Flex::SpaceEvenly)
+            .split(inner);
+
+            for (level, area) in Level::LIST.into_iter().zip(chunks.iter()) {
+                let level_str = level.as_tui_color_short();
+                let level_str = if self.level_flag.contains(level.into()) {
+                    level_str.bold()
+                } else {
+                    level_str
+                };
+                f.render_widget(level_str, *area);
             }
+
+            // render key hint
+            let key_block = Block::default().borders(Borders::ALL);
+            let inner = key_block.inner(hint_area);
+            f.render_widget(key_block, hint_area);
+            let chunks = Layout::horizontal([
+                Constraint::Length(9),
+                Constraint::Length(12),
+                Constraint::Length(14),
+            ])
+            .flex(Flex::SpaceEvenly)
+            .split(inner);
+            f.render_widget("<q> Quit".bold(), chunks[0]);
+            f.render_widget("<d> Delete".bold(), chunks[1]);
+            f.render_widget("<C> Clear All".bold(), chunks[2]);
+
+            if list_items.is_empty() {
+                let title = Line::from("Notification");
+                let block = Block::default().title(title).borders(Borders::ALL);
+                let inner = block.inner(list_area);
+                f.render_widget(block, list_area);
+                let layout = Layout::vertical([
+                    Constraint::Fill(7),
+                    Constraint::Length(1),
+                    Constraint::Fill(8),
+                ])
+                .flex(Flex::Center)
+                .split(inner);
+                f.render_widget(Line::from("No notification").centered().bold(), layout[1]);
+            } else {
+                let title = if list_items.len() == 1 {
+                    Span::from("Notification (1)")
+                } else {
+                    format!("Notifications ({})", list_items.len()).into()
+                };
+                let list = List::new(list_items)
+                    .block(Block::default().title(title).borders(Borders::ALL))
+                    .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
+                    .highlight_style(
+                        Style::default()
+                            .add_modifier(Modifier::BOLD)
+                            .add_modifier(Modifier::REVERSED),
+                    )
+                    .highlight_symbol("› ");
+                f.render_stateful_widget(list, list_area, &mut self.list_state);
+                // list state will always be corrected after rendering
+                if let Some(index) = self.list_state.selected() {
+                    let mut notifications = notifications;
+                    let (id, noti) = notifications.nth(index).expect("index is always valid");
+                    self.current_selected = Some(*id);
+                    let detail_block = Block::default()
+                        .title("Detail")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::LightBlue));
+                    let mut lines = Vec::with_capacity(2);
+                    lines.push(Line::from(Span::from(noti.notify.title.as_str()).bold()));
+                    lines.push(Line::default());
+                    let body = Text::from(noti.notify.body.as_str());
+                    lines.extend_from_slice(&body.lines);
+                    let detail_paragraph = Paragraph::new(lines)
+                        .block(detail_block)
+                        .wrap(Wrap { trim: false });
+                    f.render_widget(detail_paragraph, detail_area);
+                } else {
+                    self.current_selected = None;
+                }
+            };
             if let Some(Popup::DeleteAll(confirm)) = &mut self.current_popup {
                 let vertical_layout = Layout::vertical([
                     Constraint::Percentage(10),
                     Constraint::Percentage(70),
                     Constraint::Percentage(20),
                 ])
-                .split(main_layout[1]);
+                .split(content_area);
                 let horizontal_layout = Layout::horizontal([
                     Constraint::Percentage(20),
                     Constraint::Percentage(60),
@@ -294,12 +386,12 @@ impl App {
                 f.render_stateful_widget(ConfirmWidget, popup_area, confirm);
             }
             if let Some(noti) = self.notification_queue.front_mut() {
-                f.render_stateful_widget(NotificationWidget, main_layout[1], noti);
+                f.render_stateful_widget(NotificationWidget, content_area, noti);
                 if noti.should_disappear() {
                     self.notification_queue.pop_front();
                     // render next one
                     if let Some(noti) = self.notification_queue.front_mut() {
-                        f.render_stateful_widget(NotificationWidget, main_layout[1], noti);
+                        f.render_stateful_widget(NotificationWidget, content_area, noti);
                     }
                 }
             }
