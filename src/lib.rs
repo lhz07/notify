@@ -1,4 +1,5 @@
 pub mod app;
+pub mod command;
 pub mod confirm_widget;
 pub mod flags;
 pub mod func;

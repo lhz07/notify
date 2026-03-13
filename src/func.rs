@@ -1,6 +1,11 @@
-use crate::proto::{self, Level};
+use crate::{
+    app::App,
+    command::{CliArgs, ShellArgs, prepare_path},
+    proto::{self, Level},
+};
+use clap::CommandFactory;
 use owo_colors::OwoColorize;
-use std::borrow::Cow;
+use std::{borrow::Cow, io::BufWriter};
 
 pub fn status() -> Result<(), Cow<'static, str>> {
     let mut dir = dirs::data_local_dir().ok_or("Can not get data local dir")?;
@@ -49,5 +54,32 @@ pub fn status() -> Result<(), Cow<'static, str>> {
         }
     }
     println!("\nRun `notify view` for full list.");
+    Ok(())
+}
+
+pub fn view() -> Result<(), Cow<'static, str>> {
+    let mut dir = dirs::data_local_dir().ok_or("Can not get data local dir")?;
+    dir.push("notify");
+    let terminal = ratatui::init();
+    let mut app =
+        App::init(terminal, dir).map_err(|e| format!("Can not initialize app, error: {e}"))?;
+    let res = app.run();
+    ratatui::restore();
+    res.map_err(|e| format!("app error: {e}"))?;
+    Ok(())
+}
+
+pub fn completions(shell_args: ShellArgs) -> Result<(), Cow<'static, str>> {
+    let mut cmd = CliArgs::command();
+    let bin_name = cmd.get_name().to_string();
+    if shell_args.install {
+        let path = prepare_path(shell_args.shell)?;
+        let file = std::fs::File::create(&path).map_err(|e| format!("{e}: {}", path.display()))?;
+        let mut content = BufWriter::new(file);
+        clap_complete::generate(shell_args.shell, &mut cmd, bin_name, &mut content);
+        println!("Successfully installed {} completions!", shell_args.shell)
+    } else {
+        clap_complete::generate(shell_args.shell, &mut cmd, bin_name, &mut std::io::stdout());
+    }
     Ok(())
 }

@@ -8,7 +8,7 @@ use crate::{
 use indexmap::IndexMap;
 use ratatui::{
     DefaultTerminal,
-    crossterm::event::{self, Event, KeyCode},
+    crossterm::event::{self, Event, KeyCode, KeyModifiers},
     layout::{Constraint, Flex, Layout},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
@@ -73,7 +73,7 @@ impl App {
             Event::Key(key) => key,
             _ => return false,
         };
-        if !key.modifiers.is_empty() {
+        if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return false;
         }
 
